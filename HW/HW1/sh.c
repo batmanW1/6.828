@@ -36,6 +36,12 @@ struct pipecmd {
   struct cmd *right; // right side of pipe
 };
 
+struct multicmd {
+  int type;          // m
+  struct cmd *curr;  // current command to be executed
+  struct cmd *next;  // next (multi) command to be executed
+};
+
 int fork1(void);  // Fork but exits on failure.
 struct cmd *parsecmd(char*);
 
@@ -47,6 +53,7 @@ runcmd(struct cmd *cmd)
   struct execcmd *ecmd;
   struct pipecmd *pcmd;
   struct redircmd *rcmd;
+  struct multicmd *mcmd;
 
   if(cmd == 0)
     exit(0);
@@ -116,7 +123,19 @@ runcmd(struct cmd *cmd)
     wait(&r);
 
     break;
-  }    
+
+  case 'm':
+    mcmd = (struct multicmd*)cmd;
+
+    if (fork1() == 0) { // child executes curr cmd first
+      runcmd(mcmd->curr);
+    }
+
+    wait(&r); // parent wait for child to execute next cmd
+    runcmd(mcmd->next);
+
+    break;
+  }        
   exit(0);
 }
 
@@ -206,10 +225,23 @@ pipecmd(struct cmd *left, struct cmd *right)
   return (struct cmd*)cmd;
 }
 
+struct cmd*
+multicmd(struct cmd *curr, struct cmd *next)
+{
+  struct multicmd *cmd;
+
+  cmd = malloc(sizeof(*cmd));
+  memset(cmd, 0, sizeof(*cmd));
+  cmd->type = 'm';
+  cmd->curr = curr;
+  cmd->next = next;
+  return (struct cmd*)cmd;
+}
+
 // Parsing
 
 char whitespace[] = " \t\r\n\v";
-char symbols[] = "<|>";
+char symbols[] = "<|>;";
 
 int
 gettoken(char **ps, char *es, char **q, char **eq)
@@ -226,13 +258,15 @@ gettoken(char **ps, char *es, char **q, char **eq)
   switch(*s){
   case 0:
     break;
+  case ';':
   case '|':
   case '<':
-    s++;
-    break;
   case '>':
     s++;
     break;
+  // case '>':
+  //   s++;
+  //   break;
   default:
     ret = 'a';
     while(s < es && !strchr(whitespace, *s) && !strchr(symbols, *s))
@@ -263,6 +297,7 @@ peek(char **ps, char *es, char *toks)
 struct cmd *parseline(char**, char*);
 struct cmd *parsepipe(char**, char*);
 struct cmd *parseexec(char**, char*);
+struct cmd *parsemulti(char**, char*);
 
 // make a copy of the characters in the input buffer, starting from s through es.
 // null-terminate the copy to make it a string.
@@ -297,7 +332,20 @@ struct cmd*
 parseline(char **ps, char *es)
 {
   struct cmd *cmd;
+  cmd = parsemulti(ps, es);
+  return cmd;
+}
+
+struct cmd*
+parsemulti(char **ps, char *es)
+{
+  struct cmd *cmd;
+
   cmd = parsepipe(ps, es);
+  if (peek(ps, es, ";")){
+    gettoken(ps, es, 0, 0);
+    cmd = multicmd(cmd, parsemulti(ps, es));
+  }
   return cmd;
 }
 
@@ -351,7 +399,7 @@ parseexec(char **ps, char *es)
 
   argc = 0;
   ret = parseredirs(ret, ps, es);
-  while(!peek(ps, es, "|")){
+  while(!peek(ps, es, "|;")){
     if((tok=gettoken(ps, es, &q, &eq)) == 0)
       break;
     if(tok != 'a') {
