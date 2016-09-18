@@ -68,18 +68,29 @@ runcmd(struct cmd *cmd)
     if(ecmd->argv[0] == 0)
       exit(0);
 
-    // Prefix the command with '/bin/'
     char *subcmd = ecmd->argv[0];
+    if(strcmp(subcmd, "cd") == 0){
+      // Clumsy but will have to do for now.
+      // Chdir has no effect on the parent if run in the child.
+      if(chdir(ecmd->argv[1]) < 0) // execute "cd" on parent process
+        fprintf(stderr, "cannot cd %s\n", ecmd->argv[1]);
+      break;
+    }
+
+    // Prefix the command with '/bin/'
     char *pre = strcmp(subcmd, "sort") == 0 || strcmp(subcmd, "uniq") == 0
       || strcmp(subcmd, "wc") == 0 ? "/usr/bin/" : "/bin/";
     char *buf = malloc(strlen(pre) + strlen(subcmd) + 1);
     strcpy(buf, pre);
     strcat(buf, subcmd);
     
-    if (execv(buf, ecmd->argv) < 0) {
-      fprintf(stderr, "%s is not a valid command!\n", subcmd);
-      exit(-1);
+    if (fork1() == 0) {
+      if (execv(buf, ecmd->argv) < 0) {
+        fprintf(stderr, "%s is not a valid command!\n", subcmd);
+        exit(-1);
+      }
     }
+    wait(&r);
     free(buf);
     break;
 
@@ -156,21 +167,11 @@ int
 main(void)
 {
   static char buf[100];
-  int fd, r;
+  int fd;
 
   // Read and run input commands.
   while(getcmd(buf, sizeof(buf)) >= 0){
-    if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
-      // Clumsy but will have to do for now.
-      // Chdir has no effect on the parent if run in the child.
-      buf[strlen(buf)-1] = 0;  // chop \n
-      if(chdir(buf+3) < 0)
-        fprintf(stderr, "cannot cd %s\n", buf+3);
-      continue;
-    }
-    if(fork1() == 0)
-      runcmd(parsecmd(buf));
-    wait(&r);
+    runcmd(parsecmd(buf));
   }
   exit(0);
 }
